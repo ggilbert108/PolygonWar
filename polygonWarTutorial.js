@@ -65,7 +65,7 @@
             PROJECTILE_SIZE: 5,
             HERO_PROJECTILE_SPEED: 2000,
             ENEMY_PROJECTILE_SPEED: 300,
-            PROJECTILE_LIFETIME: 1,
+            PROJECTILE_LIFETIME: 2,
             PROJECTILE_DAMAGE: 50,
             LEVEL_SIZE: 5000,
             ENEMY_SIGHT_RADIUS: 500,
@@ -73,6 +73,7 @@
             ENEMY_STAY_BACK_VARIANCE: 200,
             ENEMY_SHOT_RECHARGE: 0.8,
             STRAFE_SWITCH_CHANCE: 0.01,
+            DROP_CHANCE: 0.1,
             context: null,
             keysDown: null,
             mouseClick: null,
@@ -236,6 +237,7 @@
     
             if (fromInput) {
                 manager.addComponentToEntity(this, new PolygonWarTutorial.CameraComponent(Bridge.Int.trunc(x), Bridge.Int.trunc(y)));
+                manager.addComponentToEntity(this, new PolygonWarTutorial.InventoryComponent());
             }
             else  {
                 var stayBack = Bridge.get(PolygonWarTutorial.App).ENEMY_STAY_BACK_RADIUS;
@@ -256,6 +258,12 @@
             manager.addComponentToEntity(this, new PolygonWarTutorial.LifetimeComponent(Bridge.get(PolygonWarTutorial.App).PROJECTILE_LIFETIME));
             manager.addComponentToEntity(this, new PolygonWarTutorial.CollisionComponent(sourceId));
             manager.addComponentToEntity(this, new PolygonWarTutorial.DamageComponent(damage));
+        },
+        addItemAssemblage: function (manager, x, y) {
+            manager.addComponentToEntity(this, new PolygonWarTutorial.PositionComponent(new PolygonWarTutorial.Vector(x, y)));
+            manager.addComponentToEntity(this, new PolygonWarTutorial.ShapeComponent("circle", 20, "blue", true));
+            manager.addComponentToEntity(this, new PolygonWarTutorial.CollisionComponent(-1));
+            manager.addComponentToEntity(this, new PolygonWarTutorial.ModifierComponent(20));
         }
     });
     
@@ -563,6 +571,8 @@
                 var cameraComponent = Bridge.cast(entity.getComponent("camera"), PolygonWarTutorial.CameraComponent);
                 var positionComponent = Bridge.cast(entity.getComponent("position"), PolygonWarTutorial.PositionComponent);
     
+                console.log(positionComponent);
+    
                 cameraComponent.set(Bridge.Int.trunc(positionComponent.position.x), Bridge.Int.trunc(positionComponent.position.y));
                 Bridge.get(PolygonWarTutorial.App).heroCam = cameraComponent;
             }
@@ -574,12 +584,14 @@
         partitionRow: 0,
         partitionCol: 0,
         ignoreEntity: 0,
+        shouldBeRemoved: false,
         constructor: function (ignoreEntity) {
             PolygonWarTutorial.Component.prototype.$constructor.call(this, "collision");
     
             this.partitionRow = -1;
             this.partitionCol = -1;
             this.ignoreEntity = ignoreEntity;
+            this.shouldBeRemoved = false;
         }
     });
     
@@ -589,6 +601,8 @@
             PARTITION_SIZE: 100
         },
         partition: null,
+        toRemove: null,
+        removePosition: null,
         constructor: function () {
             PolygonWarTutorial.System.prototype.$constructor.call(this);
     
@@ -605,9 +619,15 @@
                     this.partition.set([i, j], new Bridge.List$1(Bridge.Int)());
                 }
             }
+    
+            this.toRemove = new Bridge.List$1(Bridge.Int)();
+            this.removePosition = new Bridge.List$1(Bridge.Int)();
         },
         deleteEntity: function (id) {
             PolygonWarTutorial.System.prototype.deleteEntity.call(this, id);
+            this.removeFromPartition(id);
+        },
+        removeFromPartition: function (id) {
             for (var i = 0; i < Bridge.Array.getLength(this.partition, 0); i++) {
                 for (var j = 0; j < Bridge.Array.getLength(this.partition, 1); j++) {
                     this.partition.get([i, j]).remove(id);
@@ -615,12 +635,18 @@
             }
         },
         update: function (deltaTime) {
-            var $t, $t1;
-            var toRemove = new Bridge.List$1(Bridge.Int)();
+            var $t, $t1, $t2;
+            this.toRemove.clear();
+            this.removePosition.clear();
             $t = Bridge.getEnumerator(this.registeredEntities.getValues());
             while ($t.moveNext()) {
                 var entity = $t.getCurrent();
                 var collisionComponent = Bridge.cast(entity.getComponent("collision"), PolygonWarTutorial.CollisionComponent);
+    
+                if (collisionComponent.shouldBeRemoved) {
+                    continue;
+                }
+    
                 var shapeComponent = Bridge.cast(entity.getComponent("shape"), PolygonWarTutorial.ShapeComponent);
                 var positionComponent = Bridge.cast(entity.getComponent("position"), PolygonWarTutorial.PositionComponent);
     
@@ -629,14 +655,21 @@
                 }
     
                 if (this.updateEntityPartition(entity)) {
-                    toRemove.add(entity.getId());
+                    this.toRemove.add(entity.getId());
                 }
-                this.checkForCollisions(entity, toRemove);
+                this.checkForCollisions(entity);
             }
-            $t1 = Bridge.getEnumerator(toRemove);
+            $t1 = Bridge.getEnumerator(this.toRemove);
             while ($t1.moveNext()) {
                 var id = $t1.getCurrent();
                 this.manager.removeEntity(id);
+            }
+            $t2 = Bridge.getEnumerator(this.removePosition);
+            while ($t2.moveNext()) {
+                var id1 = $t2.getCurrent();
+                var entity1 = this.manager.getEntityById(id1);
+                this.manager.removeComponentFromEntity(entity1, "position");
+                this.removeFromPartition(id1);
             }
         },
         updateEntityPartition: function (entity) {
@@ -662,15 +695,15 @@
     
             return false;
         },
-        checkForCollisions: function (entity, toRemove) {
+        checkForCollisions: function (entity) {
             var collisionComponent = Bridge.cast(entity.getComponent("collision"), PolygonWarTutorial.CollisionComponent);
     
             var row = collisionComponent.partitionRow;
             var col = collisionComponent.partitionCol;
     
-            this.checkForCollisions$1(entity, row, col, toRemove);
+            this.checkForCollisions$1(entity, row, col);
         },
-        checkForCollisions$1: function (entity, partitionRow, partitionCol, toRemove) {
+        checkForCollisions$1: function (entity, partitionRow, partitionCol) {
             var $t;
             if (!this.inPartitionBounds(partitionRow, partitionCol)) {
                 return;
@@ -688,30 +721,52 @@
                 var other = this.manager.getEntityById(entityId);
                 var otherCollision = Bridge.cast(entity.getComponent("collision"), PolygonWarTutorial.CollisionComponent);
     
+                if (otherCollision.shouldBeRemoved || collisionComponent.shouldBeRemoved) {
+                    continue;
+                }
+    
                 if (this.entitiesCollide(entity, other)) {
-                    this.handleCollision(entity, other, toRemove);
-                    this.handleCollision(other, entity, toRemove);
+                    this.handleCollision(entity, other);
+                    this.handleCollision(other, entity);
                 }
             }
         },
-        handleCollision: function (a, b, toRemove) {
+        handleCollision: function (a, b) {
             if (a.hasComponent("damage") && b.hasComponent("health")) {
-                var damageComponent = Bridge.cast(a.getComponent("damage"), PolygonWarTutorial.DamageComponent);
-                var healthComponent = Bridge.cast(b.getComponent("health"), PolygonWarTutorial.HealthComponent);
-    
-                if (damageComponent.gaveDamage) {
-                    //To prevent damage from being dealt twice, before the projectile is removed
-                    return;
-                }
-                damageComponent.gaveDamage = true;
-                healthComponent.health -= damageComponent.damage;
-    
-                if (healthComponent.health <= 0) {
-                    toRemove.add(b.getId());
-                    Bridge.get(PolygonWarTutorial.App).kills++;
-                }
-                toRemove.add(a.getId());
+                this.handleDamage(a, b, this.toRemove);
             }
+            else  {
+                if (a.hasComponent("inventory") && b.hasComponent("modifier")) {
+                    this.handlePickup(a, b);
+                }
+            }
+        },
+        handleDamage: function (a, b, toRemove) {
+            var damageComponent = Bridge.cast(a.getComponent("damage"), PolygonWarTutorial.DamageComponent);
+            var healthComponent = Bridge.cast(b.getComponent("health"), PolygonWarTutorial.HealthComponent);
+    
+            if (damageComponent.gaveDamage) {
+                //To prevent damage from being dealt twice, before the projectile is removed
+                return;
+            }
+            damageComponent.gaveDamage = true;
+            healthComponent.health -= damageComponent.damage;
+    
+            if (healthComponent.health <= 0) {
+                toRemove.add(b.getId());
+                Bridge.get(PolygonWarTutorial.App).kills++;
+                if (Math.random() < Bridge.get(PolygonWarTutorial.App).DROP_CHANCE) {
+                    this.dropRandomItem(b);
+                }
+            }
+            toRemove.add(a.getId());
+        },
+        handlePickup: function (actor, item) {
+            var collision = Bridge.cast(item.getComponent("collision"), PolygonWarTutorial.CollisionComponent);
+    
+            collision.shouldBeRemoved = true;
+    
+            this.removePosition.add(item.getId());
         },
         entitiesCollide: function (a, b) {
             var shapeA = Bridge.cast(a.getComponent("shape"), PolygonWarTutorial.ShapeComponent);
@@ -730,6 +785,12 @@
             }
     
             return distance < combinedRadius;
+        },
+        dropRandomItem: function (entity) {
+            var positionComponent = Bridge.cast(entity.getComponent("position"), PolygonWarTutorial.PositionComponent);
+    
+            var item = this.manager.addAndGetEntity();
+            item.addItemAssemblage(this.manager, Bridge.Int.trunc(positionComponent.position.x), Bridge.Int.trunc(positionComponent.position.y));
         },
         inPartitionBounds: function (row, col) {
             return row >= 0 && col >= 0 && row < Bridge.Array.getLength(this.partition, 0) && col < Bridge.Array.getLength(this.partition, 1);
@@ -803,6 +864,18 @@
         }
     });
     
+    Bridge.define('PolygonWarTutorial.InventoryComponent', {
+        inherits: [PolygonWarTutorial.Component],
+        item1Id: 0,
+        item2Id: 0,
+        constructor: function () {
+            PolygonWarTutorial.Component.prototype.$constructor.call(this, "inventory");
+    
+            this.item1Id = -1;
+            this.item2Id = -1;
+        }
+    });
+    
     Bridge.define('PolygonWarTutorial.LifetimeComponent', {
         inherits: [PolygonWarTutorial.Component],
         timeAlive: 0,
@@ -812,6 +885,16 @@
     
             this.timeAlive = timeAlive;
             this.currentTime = 0;
+        }
+    });
+    
+    Bridge.define('PolygonWarTutorial.ModifierComponent', {
+        inherits: [PolygonWarTutorial.Component],
+        damageModifier: 0,
+        constructor: function (damageModifier) {
+            PolygonWarTutorial.Component.prototype.$constructor.call(this, "modifier");
+    
+            this.damageModifier = damageModifier;
         }
     });
     
