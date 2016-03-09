@@ -763,8 +763,13 @@
         },
         handlePickup: function (actor, item) {
             var collision = Bridge.cast(item.getComponent("collision"), PolygonWarTutorial.CollisionComponent);
+            var health = Bridge.cast(actor.getComponent("health"), PolygonWarTutorial.HealthComponent);
     
             collision.shouldBeRemoved = true;
+            health.health += 10;
+            if (health.health >= health.maxHealth) {
+                health.health = health.maxHealth;
+            }
     
             this.removePosition.add(item.getId());
         },
